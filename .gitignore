@@ -1,0 +1,18 @@
+# Datasets
+**/mnist/*.gz
+**/CIFAR_data/
+
+# Model Checkpoints
+**/*.pickle
+
+# Python caches
+**/__pycache__/
+**/*.pyc
+
+# Environments
+**/.venv/
+**/venv/
+
+# IDE files
+**/.idea/
+**/.vscode/

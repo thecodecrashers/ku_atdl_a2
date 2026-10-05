@@ -1,0 +1,9 @@
+mnist/*.gz
+CIFAR_data/
+*.pickle
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
