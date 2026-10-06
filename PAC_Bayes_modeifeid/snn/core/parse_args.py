@@ -16,12 +16,13 @@ class BasicParser(object):
         self.parser.add_argument("--seed", help="Random seed", type=int, required=False, default=11)
         self.parser.add_argument("--binary", action='store_true')
         self.parser.add_argument("--overwrite", action='store_true')
-        self.parser.add_argument("--device", help="Torch device (default: cuda if available, else cpu)", type=str,
-                                 required=False, default=None)
+        self.parser.add_argument("--device", help="Torch device (default: cuda if available, else cpu)", type=str, required=False, default=None)
+        self.parser.add_argument("--output_dir", help="Output directory", type=str, required=False, default=None)
+        self.parser.add_argument("--run_name", help="Run name", type=str, required=False, default=None)
+        self.parser.add_argument("--random_labels", help="Randomize training labels", action="store_true")
 
     def get_args(self, args):
-        return {"model": args.model, "layers": args.layers, "sgd_epochs": args.sgd_epochs, "seed": args.seed,
-                "binary": args.binary, "overwrite": args.overwrite, "device": args.device}
+        return {"model": args.model, "layers": args.layers, "sgd_epochs": args.sgd_epochs, "seed": args.seed, "binary": args.binary, "overwrite": args.overwrite, "device": args.device, "output_dir": args.output_dir, "run_name": args.run_name, "random_labels": getattr(args, "random_labels", False)}
 
     def parse(self):
         args = self.parser.parse_args()
@@ -39,12 +40,11 @@ class CompleteParser(BasicParser):
                                  required=False, default=20)
         self.parser.add_argument("--lr_factor", help="Factor by which the learning rate is dropped", type=float,
                                  required=False, default=0.05)
-        self.parser.add_argument("--trainw", help="Train posterior weights during PAC-Bayes optimization", type=bool,
-                            required=False, default=True)
+        self.parser.add_argument("--trainw", help="Train posterior weights during PAC-Bayes optimization", action=argparse.BooleanOptionalAction, default=True)
+        self.parser.add_argument("--snn_samples", help="Stochastic evaluation samples", type=int, required=False, default=1)
 
     def get_args(self, args):
-        pacb_args = {"pacb_epochs": args.pacb_epochs, "lr": args.lr, "drop_lr": args.drop_lr,
-                     "lr_factor": args.lr_factor, "trainw": args.trainw}
+        pacb_args = {"pacb_epochs": args.pacb_epochs, "lr": args.lr, "drop_lr": args.drop_lr, "lr_factor": args.lr_factor, "trainw": args.trainw, "snn_samples": getattr(args, "snn_samples", 1)}
         complete_args = super().get_args(args)
         complete_args.update(pacb_args)
         return complete_args
@@ -64,7 +64,7 @@ class Interpreter(object):
             if self.input_args["binary"]:
                 path = os.path.join("binary_mnist", "{}_layers{}_epochs{}_seed{}.pickle".format(norm_name, layers,
                                                                                                 epochs, seed))
-                (trainX, trainY), (testX, testY) = load_binary_mnist()
+                (trainX, trainY), (testX, testY) = load_binary_mnist(random_labels=self.input_args.get("random_labels", False), seed=seed)
                 model = FC(trainX, trainY, layers=[784] + layers + [1], scopes_list=scopes_list,
                            seed=seed, initial_weights=initial_weights, device=device)
             else:

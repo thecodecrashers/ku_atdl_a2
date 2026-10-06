@@ -16,28 +16,39 @@ pip install -r requirements.txt
 Run all commands below from the root of this folder (the one containing `snn/` and `mnist/`). A GPU is used automatically if available (`--device cpu` / `--device cuda:0` to force one).
 
 ## Instructions
-Running the code involves 2 steps:
-1. SGD optimization, which saves initial and final network weights to `snn/experiments`  
-2. PAC-Bayes optimization, which first loads the weights saved in the previous step, and then optimizes the PAC-Bayes bound over the weights and variances.
 
-### SGD Optimization
-To run SGD on a fully connected neural network consisting of a hidden layer with 600 neurons for 20 epochs on binary MNIST, execute the following command:
+We provide a streamlined experiment runner to easily reproduce the results from the paper and run specific ablations.
 
-`python snn/experiments/run_sgd.py fc --layers 600 --sgd_epochs 20 --binary`
+### 1. Run Baseline Reproduction (Table 1)
+To run all baseline architectures (T-600, T-1200, T-300x2, T-600x2, T-1200x2, T-600x3, R-600) for Table 1:
+```bash
+python experiments/run_experiments.py --suite baseline
+```
 
-The code will throw a `FileExistsError` if a checkpoint already exists. To overwrite an existing checkpoint, use the following command: 
+### 2. Run Robustness Ablations
+To run additional PAC-Bayes ablations (reusing the T-600 checkpoint from the baseline suite):
+```bash
+python experiments/run_experiments.py --suite ablation
+```
 
-`python snn/experiments/run_sgd.py fc --layers 600 --sgd_epochs 20 --overwrite --binary`
+### 3. Generate Tables and Plots
+After running the suites, you can aggregate the results and generate evaluation plots by running:
+```bash
+python experiments/plot_results.py
+```
+This will output `table1_comparison.csv` and history plots inside the `results/` directory.
 
-### PAC-Bayes Optimization
+> **Note:** For more information about the reproduction details and specific ablation protocols, please read [SUMMARY.md](SUMMARY.md) and [REPRODUCTION_NOTES.md](REPRODUCTION_NOTES.md).
 
-The following command can be used to run the PAC-Bayes optimization for 1000 epochs on the saved checkpoint: 
+### (Optional) Manual Execution
+You can still run individual scripts manually exactly as in the original implementation:
+```bash
+# SGD Phase
+python snn/experiments/run_sgd.py fc --layers 600 --sgd_epochs 20 --binary
 
-`python snn/experiments/run_pacb.py fc --layers 600 --sgd_epochs 20 --pacb_epochs 1000 --lr 0.001 --drop_lr 250 --lr_factor 0.1 --binary`
-
-The learning rate starts at 0.001 and is dropped to 0.0001 after 250 epochs.
-
-A CIFAR-10 convolutional network is also available (`cnn` instead of `fc`, without `--binary`); CIFAR-10 is downloaded automatically to `CIFAR_data/` on first use.
+# PAC-Bayes Phase
+python snn/experiments/run_pacb.py fc --layers 600 --sgd_epochs 20 --pacb_epochs 1000 --lr 0.001 --drop_lr 250 --lr_factor 0.1 --binary
+```
 
 ## What changed compared to the TensorFlow version
 | Original (TF 1.x / Keras) | This port (PyTorch) |

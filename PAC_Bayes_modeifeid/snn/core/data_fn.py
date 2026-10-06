@@ -70,10 +70,14 @@ def load_mnist_data(data_dir = MNIST_DATA_DIR, one_hot=True, validation_size=MNI
     return (trainX, trainY), (testX, testY)
 
 
-def load_binary_mnist(data_dir = MNIST_DATA_DIR, validation_size=MNIST_VALIDATION_SIZE):
+def load_binary_mnist(data_dir = MNIST_DATA_DIR, validation_size=MNIST_VALIDATION_SIZE, random_labels=False, seed=11):
     (trainX, trainY), (testX, testY) = _load_raw_mnist(data_dir, validation_size)
     trainY = binarize_mnist_labels(trainY).astype(np.float32)
     testY = binarize_mnist_labels(testY).astype(np.float32)
+    if random_labels:
+        rng = np.random.RandomState(seed)
+        idx = rng.permutation(len(trainY))
+        trainY = trainY[idx]
     return (trainX, trainY), (testX, testY)
 
 

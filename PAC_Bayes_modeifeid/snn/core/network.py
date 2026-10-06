@@ -47,6 +47,7 @@ class Network(object):
         self.scopes_list = scopes_list
         self.Nsamples = self.X.shape[0]
         self.output_dict = {"L2": [], "diff": [], "weights": [], "mean_weights": [], "var_weights": [], "PACBound": [], "B_val": [], "KL_val": [], "test_acc": [], "train_acc": [], "L2_PACB": [], "log_post_all": [], "PACB_weights": [], "log_prior_std": []}
+        self.history = []
 
         # PACBound parameters
         self.log_prior_std_precision = 100.0
@@ -362,7 +363,21 @@ class Network(object):
             _log_prior_std, Bquad_i = log_prior_std.item(), Bquad.item()
             factor1_i, factor2_i = factor1.item(), factor2.item()
 
-            # Save at a frequency for every epoch, or at the last run
+
+            if i % (1 * Nsamples / batch_size) == 0 or (i == epochs * int(Nsamples / batch_size) - 1):
+                bpac = approximate_BPAC_bound(train_accuracy_stoch, B_i)
+                self.history.append({
+                    "epoch": epoch,
+                    "A_term": A_i,
+                    "B_term": B_i,
+                    "objective": cost_i,
+                    "stochastic_train_accuracy": train_accuracy_stoch,
+                    "stochastic_train_error": 1.0 - train_accuracy_stoch,
+                    "KL": kldiv2_i / 2,
+                    "PAC_bound_estimate": bpac,
+                    "log_prior_std": _log_prior_std,
+                    "learning_rate": lr_factor * learning_rate if lr_dropped else learning_rate
+                })
             if i%(1 * Nsamples / batch_size)==0 or (i == epochs*int(Nsamples/batch_size) - 1):
                 bpac = approximate_BPAC_bound(train_accuracy_stoch, B_i)
                 output ="".join("Epoch:" + '%04d' % (epoch+1) + " cost=" + str(cost_i) +
@@ -470,4 +485,4 @@ class Network(object):
               "KL value: ", '%.4f' % KL_val)
 
         self.PACB_store(save_dict, i=0, log_prior_std=self.log_prior_std, bpac=bpac, B_val=B_val, KL_val=KL_val, test_acc=mean_test_accuracy, train_acc=mean_train_accuracy)
-        return bpac, B_val, KL_val, self.deltaPAC
+        return bpac, B_val, KL_val, self.deltaPAC, mean_train_accuracy, mean_test_accuracy, self.log_prior_std
