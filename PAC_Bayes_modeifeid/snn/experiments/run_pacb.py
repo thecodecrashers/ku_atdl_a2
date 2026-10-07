@@ -2,6 +2,7 @@ import csv
 import json
 import os
 import sys
+import pickle
 
 import numpy as np
 
@@ -71,7 +72,8 @@ def run_pacb(weights_rand_init, model, test_set, epochs, learning_rate, drop_lr,
         path = os.path.join(package_path, "experiments", "cifar",
                             ("model_mean_opt{}_LR{}_seed{}.pickle".format(trainw, learning_rate, seed)))
     model.save_output(path=path)
-    serialize(model, path, overwrite=True)
+    with open(path, 'wb') as f:
+        pickle.dump(model, f)
 
 
 if __name__ == '__main__':
