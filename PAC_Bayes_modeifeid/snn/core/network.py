@@ -80,8 +80,8 @@ class Network(object):
         self.history = []
 
         # PACBound parameters
-        self.log_prior_std_precision = 100.0
-        self.log_prior_std_base = 0.1
+        self.log_prior_std_precision = 1000.0
+        self.log_prior_std_base = 1.0
         self.deltaPAC = 0.025
 
         # Set random seed
@@ -328,12 +328,20 @@ class Network(object):
                 sum_log_post_variance = sum(torch.sum(s) for s in log_post_std_list)
 
                 self.mean_weights_component = (norm_params) / (
-                    torch.exp(2 * log_prior_std)
+                    (self.log_prior_std_base - 0.001) / (1 + torch.exp(-log_prior_std))
                 )
                 self.var_weights_component = (
-                    norm_post_variance / (torch.exp(2 * log_prior_std))
+                    norm_post_variance
+                    / (
+                        (self.log_prior_std_base - 0.001)
+                        / (1 + torch.exp(-log_prior_std))
+                    )
                     - 2 * sum_log_post_variance
-                    + 2 * nparams * log_prior_std
+                    + nparams
+                    * torch.log(
+                        (self.log_prior_std_base - 0.001)
+                        / (1 + torch.exp(-log_prior_std))
+                    )
                 )
                 self.KLdivTimes2 = (
                     self.mean_weights_component + self.var_weights_component - nparams
@@ -341,8 +349,9 @@ class Network(object):
 
             f1 = torch.tensor(factor1, device=self.device)
             factor2 = 2 * torch.log(
-                torch.clamp(
-                    math.log(self.log_prior_std_base) - 2 * log_prior_std, min=1e-2
+                math.log(self.log_prior_std_base)
+                - torch.log(
+                    (self.log_prior_std_base - 0.001) / (1 + torch.exp(-log_prior_std))
                 )
             )
             Bquad = (
@@ -621,18 +630,21 @@ class Network(object):
         # Load and discretize prior variance parameter
         init_log_prior_std = float(np.asarray(self.log_prior_std).reshape(-1)[0])
         jdisc = self.log_prior_std_precision * (
-            np.log(self.log_prior_std_base) - 2 * init_log_prior_std
+            np.log(self.log_prior_std_base)
+            - np.log(
+                (self.log_prior_std_base - 0.001) / (1 + np.exp(-init_log_prior_std))
+            )
         )
         print("Before discretization")
         print(init_log_prior_std, jdisc)
-        jdisc_up = np.float32(math.ceil(jdisc))
-        jdisc_down = np.float32(math.floor(jdisc))
-        init_log_prior_std_up = (
+        jdisc_up = np.maximum(np.float32(math.ceil(jdisc)), 1)
+        jdisc_down = np.maximum(np.float32(math.floor(jdisc)), 1)
+        init_log_prior_std_up = np.exp(
             np.log(self.log_prior_std_base) - jdisc_up / self.log_prior_std_precision
-        ) / 2
-        init_log_prior_std_down = (
+        )
+        init_log_prior_std_down = np.exp(
             np.log(self.log_prior_std_base) - jdisc_down / self.log_prior_std_precision
-        ) / 2
+        )
         print("After discretization")
         print(init_log_prior_std_down, jdisc_down)
         print(init_log_prior_std_up, jdisc_up)
@@ -667,8 +679,8 @@ class Network(object):
 
             def KLdivTimes2(log_prior_std):
                 return (
-                    (norm_post_variance + norm_params) / (np.exp(2 * log_prior_std))
-                    + 2 * nparams * log_prior_std
+                    (norm_post_variance + norm_params) / log_prior_std
+                    + nparams * math.log(log_prior_std)
                     - nparams
                     - 2 * sum_log_post_variance
                 )
@@ -714,7 +726,7 @@ class Network(object):
             KL_val = KLdivTimes2(init_log_prior_std_down) / 2.0
 
         bpac = approximate_BPAC_bound(mean_train_accuracy, B_val)
-        print("Results with delta = %.2f" % (self.deltaPAC + 0.01))
+        print("Results with delta = %.3f" % (self.deltaPAC + 0.01))
         print(
             "PAC bound error:",
             "%.4f" % bpac,
