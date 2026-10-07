@@ -80,8 +80,8 @@ class Network(object):
         self.history = []
 
         # PACBound parameters
-        self.log_prior_std_precision = 1000.0
-        self.log_prior_std_base = 1.0
+        self.log_prior_std_precision = 100.0
+        self.log_prior_std_base = 0.1
         self.deltaPAC = 0.025
 
         # Set random seed
@@ -524,6 +524,7 @@ class Network(object):
             )
             train_step.zero_grad()
             cost.sum().backward()
+            train_step.step()
 
             A_i, cost_i, kldiv2_i, B_i = (
                 A.item(),
