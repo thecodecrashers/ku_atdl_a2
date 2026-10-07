@@ -339,6 +339,8 @@ class Network(object):
         train_step = TFRMSprop(trainable, lr=learning_rate)
         lr_dropped = False
 
+        lps_max = (math.log(self.log_prior_std_base) - 1.0 / self.log_prior_std_precision) / 2
+
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
 
@@ -386,7 +388,9 @@ class Network(object):
             A, cost, Bquad, _, _, _, factor1, factor2 = objective(self._t(batch_x), self._t(batch_y), noise_list)
             train_step.zero_grad()
             cost.sum().backward()
-            train_step.step()
+            
+            with torch.no_grad():
+                log_prior_std.clamp_(max=lps_max)
 
             A_i, cost_i, kldiv2_i, B_i = A.item(), cost.item(), self.KLdivTimes2.item(), self.B.item()
             m_w, v_w = self.mean_weights_component.item(), self.var_weights_component.item()
