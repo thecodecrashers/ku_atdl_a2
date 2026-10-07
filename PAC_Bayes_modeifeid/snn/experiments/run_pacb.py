@@ -1,7 +1,8 @@
+import csv
+import json
 import os
 import sys
-import json
-import csv
+
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -70,7 +71,7 @@ def run_pacb(weights_rand_init, model, test_set, epochs, learning_rate, drop_lr,
         path = os.path.join(package_path, "experiments", "cifar",
                             ("model_mean_opt{}_LR{}_seed{}.pickle".format(trainw, learning_rate, seed)))
     model.save_output(path=path)
-    serialize(original_model_path, path, overwrite=True)
+    serialize(model, path, overwrite=True)
 
 
 if __name__ == '__main__':
