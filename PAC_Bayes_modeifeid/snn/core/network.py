@@ -299,7 +299,7 @@ class Network(object):
             A = self.cost_fn(self.yhat, y)
 
             if self.laplace:
-                b0 = torch.exp(log_prior_std)
+                b0 = log_prior_std
                 KL_div = 0.0
                 mean_diff_sum = 0.0
 
@@ -310,7 +310,7 @@ class Network(object):
                     b1 = torch.exp(log_post_std)
                     diff_abs = torch.abs(p - p0)
 
-                    term1 = log_prior_std - log_post_std
+                    term1 = torch.log(b0) - log_post_std
                     term2 = diff_abs / b0
                     term3 = (b1 / b0) * torch.exp(-diff_abs / b1)
                     term4 = -1.0
@@ -657,14 +657,14 @@ class Network(object):
 
         if self.laplace:
 
-            def KLdivTimes2(log_prior_std):
-                b0 = np.exp(log_prior_std)
+            def KLdivTimes2(prior_scale):
+                b0 = prior_scale
                 kl = 0.0
                 for diff, log_b1 in zip(params_means, log_post_std_list):
                     b1 = np.exp(log_b1)
                     abs_diff = np.abs(diff)
 
-                    term1 = log_prior_std - log_b1
+                    term1 = np.log(b0) - log_b1
                     term2 = abs_diff / b0
                     term3 = (b1 / b0) * np.exp(-abs_diff / b1)
                     term4 = -1.0
