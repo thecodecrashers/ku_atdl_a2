@@ -1,19 +1,25 @@
-import os
 import math
+import os
 import pickle
 import random
+import time
 from functools import cached_property
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-from snn.core.extra_fn import (generate_noise, generate_zero_noise, approximate_BPAC_bound, next_batch,
-                               shuffledata)
+from snn.core import get_device, package_path
+from snn.core.extra_fn import (
+    approximate_BPAC_bound,
+    generate_noise,
+    generate_zero_noise,
+    next_batch,
+    shuffledata,
+)
 from snn.core.mlp_fn import l2_norm
 from snn.core.optim import TFRMSprop
 from snn.core.sgd import SGD
-from snn.core import package_path, get_device
 
 
 def correct_predictions(yhat, y):
@@ -33,7 +39,7 @@ class Network(object):
     and `self.model_with_noise(x, noise_list, params)`.
     """
 
-    def __init__(self, X, Y, logging=True, layers=[784, 600, 10], scopes_list=['hidden1', 'output'], seed=11,
+    def __init__(self, X, Y, logging=True, layers=[784, 600, 10], scopes_list=['hidden1', 'output'], seed=11, laplace=False,
                  device=None):
         self.device = get_device(device)
         torch.manual_seed(seed)
@@ -56,6 +62,7 @@ class Network(object):
 
         # Set random seed
         self.seed = seed
+        self.laplace = laplace
         self.params = None
         self._cost_described = False
         return
@@ -238,15 +245,38 @@ class Network(object):
             network_perturb_list = self._perturbations(log_post_std_list, noise_list)
             self.yhat = self.model_with_noise(x, network_perturb_list, self.params)
 
-            norm_post_variance = sum(torch.sum(torch.exp(s * 2)) for s in log_post_std_list)
-            sum_log_post_variance = sum(torch.sum(s) for s in log_post_std_list)
-
             A = self.cost_fn(self.yhat, y)
 
-            self.mean_weights_component = (norm_params) / (torch.exp(2 * log_prior_std))
-            self.var_weights_component = norm_post_variance / (torch.exp(2 * log_prior_std)) \
-                                         - 2 * sum_log_post_variance + 2 * nparams * log_prior_std
-            self.KLdivTimes2 = self.mean_weights_component + self.var_weights_component - nparams
+            if self.laplace:
+                b0 = torch.exp(log_prior_std)
+                KL_div = 0.0
+                mean_diff_sum = 0.0
+
+                for p, p0_np, log_post_std in zip(self.params, prior_weights, log_post_std_list):
+                    p0 = self._t(p0_np)
+                    b1 = torch.exp(log_post_std)
+                    diff_abs = torch.abs(p - p0)
+
+                    term1 = log_prior_std - log_post_std
+                    term2 = diff_abs / b0
+                    term3 = (b1 / b0) * torch.exp(-diff_abs / b1)
+                    term4 = -1.0
+
+                    KL_div += torch.sum(term1 + term2 + term3 + term4)
+                    mean_diff_sum += torch.sum(term2)
+
+                self.KLdivTimes2 = 2.0 * KL_div
+                self.mean_weights_component = mean_diff_sum
+                self.var_weights_component = KL_div - mean_diff_sum
+            else:
+                norm_post_variance = sum(torch.sum(torch.exp(s * 2)) for s in log_post_std_list)
+                sum_log_post_variance = sum(torch.sum(s) for s in log_post_std_list)
+
+                self.mean_weights_component = (norm_params) / (torch.exp(2 * log_prior_std))
+                self.var_weights_component = norm_post_variance / (torch.exp(2 * log_prior_std)) \
+                                             - 2 * sum_log_post_variance + 2 * nparams * log_prior_std
+                self.KLdivTimes2 = self.mean_weights_component + self.var_weights_component - nparams
+        
             f1 = torch.tensor(factor1, device=self.device)
             factor2 = 2 * torch.log(torch.clamp(math.log(self.log_prior_std_base) - 2 * log_prior_std, min=1e-2))
             Bquad = self.KLdivTimes2 / 2 + math.log(np.pi ** 2 * effective_m / (6 * 0.05)) + f1 + factor2
@@ -326,7 +356,7 @@ class Network(object):
             batch_x, batch_y = next_batch(trainX, trainY, batch_size, int(i % (Nsamples/batch_size)))
 
             # For the stochastic network
-            noise_list = generate_noise(self.layer_shapes)
+            noise_list = generate_noise(self.layer_shapes, self.laplace)
 
             if i % int(Nsamples/batch_size) == 0: # At every epoch, shuffle the data
                 trainX, trainY = shuffledata(trainX, trainY)
@@ -337,7 +367,7 @@ class Network(object):
                     bx, by = next_batch(trainX, trainY, batch_size, int(ib % (Nsamples/batch_size)))
 
                     # Find accuracy of the stochastic network
-                    noise_list = generate_noise(self.layer_shapes)
+                    noise_list = generate_noise(self.layer_shapes, self.laplace)
                     train_accuracy_stoch += self._pacb_correct_sum(bx, by, log_post_std_list, noise_list)
 
                     # Find accuracy of the deterministic network
@@ -380,7 +410,7 @@ class Network(object):
                 })
             if i%(1 * Nsamples / batch_size)==0 or (i == epochs*int(Nsamples/batch_size) - 1):
                 bpac = approximate_BPAC_bound(train_accuracy_stoch, B_i)
-                output ="".join("Epoch:" + '%04d' % (epoch+1) + " cost=" + str(cost_i) +
+                output ="".join(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] " + "Epoch:" + '%04d' % (epoch+1) + " cost=" + str(cost_i) +
                                 " mean accuracy %.4f" % train_accuracy_stoch + ' KL div:  %.4f' % (kldiv2_i/2) +
                                 ' A term: %.4f' % A_i + ' B term: %.4f' % B_i + ' Bquad: %.4f' % Bquad_i +
                                 ' log_prior_std: %.4f' % _log_prior_std + ' B PAC: %.4f' % bpac + ' factor1: %.4f' % factor1_i +
@@ -439,13 +469,29 @@ class Network(object):
         log_post_std_list = [np.asarray(v, dtype=np.float64) for v in log_post_std_init_list]
         scale_list = [self._t(np.exp(v)) for v in log_post_std_list]
 
-        norm_post_variance = sum(np.sum(np.exp(x*2)) for x in log_post_std_list)
-        norm_params = sum(np.sum(np.asarray(x, dtype=np.float64)**2) for x in params_means)
-        sum_log_post_variance = sum(np.sum(x) for x in log_post_std_list)
+        if self.laplace:
+            def KLdivTimes2(log_prior_std):
+                b0 = np.exp(log_prior_std)
+                kl = 0.0
+                for diff, log_b1 in zip(params_means, log_post_std_list):
+                    b1 = np.exp(log_b1)
+                    abs_diff = np.abs(diff)
 
-        def KLdivTimes2(log_prior_std):
-            return (norm_post_variance+norm_params)/(np.exp(2*log_prior_std)) + 2*nparams*log_prior_std - nparams \
-                   - 2*sum_log_post_variance
+                    term1 = log_prior_std - log_b1
+                    term2 = abs_diff / b0
+                    term3 = (b1 / b0) * np.exp(-abs_diff / b1)
+                    term4 = -1.0
+
+                    kl += np.sum(term1 + term2 + term3 + term4)
+                return 2.0 * kl
+        else:
+            norm_post_variance = sum(np.sum(np.exp(x*2)) for x in log_post_std_list)
+            norm_params = sum(np.sum(np.asarray(x, dtype=np.float64)**2) for x in params_means)
+            sum_log_post_variance = sum(np.sum(x) for x in log_post_std_list)
+
+            def KLdivTimes2(log_prior_std):
+                return (norm_post_variance+norm_params)/(np.exp(2*log_prior_std)) + 2*nparams*log_prior_std - nparams \
+                       - 2*sum_log_post_variance
 
         def B_fn(log_prior_std, jopt):
             Bquad = KLdivTimes2(log_prior_std)/2 + np.log(np.pi**2*effective_m/(6*self.deltaPAC)) \
@@ -455,7 +501,7 @@ class Network(object):
         mean_train_accuracy = 0
         mean_test_accuracy = 0
         for ns in range(N_SNN_samples):
-            noise_list = generate_noise(self.layer_shapes)
+            noise_list = generate_noise(self.layer_shapes, self.laplace)
 
             train_accur_i = self.print_accuracy_in_batches_noise(self.X, self.Y, noise_list, scale_list,
                                                                  whichset='train')

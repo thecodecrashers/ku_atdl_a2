@@ -42,6 +42,7 @@ class CompleteParser(BasicParser):
                                  required=False, default=0.05)
         self.parser.add_argument("--trainw", help="Train posterior weights during PAC-Bayes optimization", action=argparse.BooleanOptionalAction, default=True)
         self.parser.add_argument("--snn_samples", help="Stochastic evaluation samples", type=int, required=False, default=1)
+        self.parser.add_argument("--laplace", help="Use Laplace noise instead of Gaussian noise", action=argparse.BooleanOptionalAction, default=False)
 
     def get_args(self, args):
         pacb_args = {"pacb_epochs": args.pacb_epochs, "lr": args.lr, "drop_lr": args.drop_lr, "lr_factor": args.lr_factor, "trainw": args.trainw, "snn_samples": getattr(args, "snn_samples", 1)}
@@ -58,6 +59,7 @@ class Interpreter(object):
         norm_name = self.input_args["model"].upper()
         layers, epochs, seed = self.input_args["layers"], self.input_args["sgd_epochs"], self.input_args["seed"]
         device = self.input_args.get("device")
+        laplace = self.input_args.get("laplace", False)
         scopes_list = ["hidden" + str(i+1) for i in range(len(layers))]
         scopes_list.append("output")
         if norm_name == "FC":
@@ -66,13 +68,13 @@ class Interpreter(object):
                                                                                                 epochs, seed))
                 (trainX, trainY), (testX, testY) = load_binary_mnist(random_labels=self.input_args.get("random_labels", False), seed=seed)
                 model = FC(trainX, trainY, layers=[784] + layers + [1], scopes_list=scopes_list,
-                           seed=seed, initial_weights=initial_weights, device=device)
+                           laplace=laplace, seed=seed, initial_weights=initial_weights, device=device)
             else:
                 path = os.path.join("mnist", "{}_layers{}_epochs{}_seed{}.pickle".format(norm_name, layers, epochs,
                                                                                          seed))
                 (trainX, trainY), (testX, testY) = load_mnist_data()
                 model = FC(trainX, trainY, layers=[784] + layers + [10], scopes_list=scopes_list,
-                           seed=seed, initial_weights=initial_weights, device=device)
+                           laplace=laplace, seed=seed, initial_weights=initial_weights, device=device)
         elif norm_name == "CNN":
             path = os.path.join("cifar", "{}_epochs{}_seed{}.pickle".format(norm_name, epochs, seed))
             (trainX, trainY), (testX, testY) = load_cifar_data()

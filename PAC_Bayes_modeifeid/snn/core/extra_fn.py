@@ -2,10 +2,13 @@ import numpy as np
 import random
 
 
-def generate_noise(layer_shapes):
+def generate_noise(layer_shapes, laplace=False):
     noise_list = []
     for l_shape in layer_shapes:
-        noise_list.append(np.random.normal(size=l_shape).astype(np.float32))
+        if laplace:
+            noise_list.append(np.random.laplace(size=l_shape).astype(np.float32))
+        else:
+            noise_list.append(np.random.normal(size=l_shape).astype(np.float32))
     return noise_list
 
 

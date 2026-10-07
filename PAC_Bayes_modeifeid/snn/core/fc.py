@@ -6,8 +6,8 @@ class FC(Network):
     """ A Fully Connected neural network learning model """
 
     def __init__(self, X, Y, logging=True, layers=[784, 600, 10], scopes_list=['hidden1', 'output'],
-                 seed=11, initial_weights=None, device=None):
-        Network.__init__(self, X, Y, logging, layers, scopes_list, seed, device)
+                 seed=11, initial_weights=None, laplace=False, device=None):
+        Network.__init__(self, X, Y, logging, layers, scopes_list, seed, laplace, device)
 
         self.model = multilayer_perceptron  # The base network
         self.model_with_noise = MLP_withnoise
