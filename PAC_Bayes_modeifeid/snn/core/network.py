@@ -14,6 +14,8 @@ from snn.core.extra_fn import (
     approximate_BPAC_bound,
     generate_noise,
     generate_zero_noise,
+    inverse_binary_kl,
+    monte_carlo_error_upper,
     next_batch,
     shuffledata,
 )
@@ -83,6 +85,7 @@ class Network(object):
         self.log_prior_std_precision = 100.0
         self.log_prior_std_base = 0.1
         self.deltaPAC = 0.025
+        self.deltaMC = 0.01
 
         # Set random seed
         self.seed = seed
@@ -141,18 +144,18 @@ class Network(object):
         self, x, y, noise, scale_list, no_batches=10, whichset="train"
     ):
         """Accuracy of the stochastic network whose weights are perturbed by scale_list * noise."""
-        ntest, no_batches = x.shape[0], int(no_batches)
+        ntest, no_batches = x.shape[0], min(x.shape[0], int(no_batches))
         testidx = np.linspace(0, ntest, no_batches + 1)
         perturb = [s * self._t(n) for s, n in zip(scale_list, noise)]
-        test_acc = 0
+        correct_count = 0
         for ii, jj in zip(testidx[:-1], testidx[1:]):
             ii, jj = int(ii), int(jj)
             with torch.no_grad():
                 yhat = self.model_with_noise(self._t(x[ii:jj]), perturb, self.params)
-                test_acc += (
-                    correct_predictions(yhat, self._t(y[ii:jj])).float().mean().item()
+                correct_count += (
+                    correct_predictions(yhat, self._t(y[ii:jj])).sum().item()
                 )
-        test_acc = test_acc / no_batches
+        test_acc = correct_count / ntest
         print("Average %s accuracy: %.4f" % (whichset, test_acc))
         return test_acc
 
@@ -252,7 +255,7 @@ class Network(object):
         init_log_prior_std = -3.0
         log_post_std_list = []
         for _w in network_weights:
-            log_post_std_init = np.log(2 * np.abs(_w))
+            log_post_std_init = np.log(np.maximum(2 * np.abs(_w), np.float32(1e-8)))
             log_post_std_list.append(self._t(log_post_std_init).requires_grad_(True))
 
         log_prior_std = torch.full(
@@ -276,20 +279,14 @@ class Network(object):
         (A, cost, Bquad, effective_m, log_prior_std, log_post_std_list, factor1, factor2)."""
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
-        # Obtain the effective number of data points
         effective_m = self.X.shape[0]
 
-        # Gather the initial weights to create a new optimization network
         network_weights, log_post_std_list, log_prior_std = self.PACB_init
-
-        # The means of the stochastic network are initialised at the weights found by SGD
         self._set_params(network_weights, requires_grad=trainWeights)
 
         nparams, layer_shapes = self.count_N_params()
         self.layer_shapes = layer_shapes
-        norm_params = self._t(
-            sum(np.sum((x - y) ** 2) for x, y in zip(network_weights, prior_weights))
-        )
+        prior_tensors = [self._t(w).clone() for w in prior_weights]
         factor1 = 2 * math.log(self.log_prior_std_precision)
 
         def objective(x, y, noise_list):
@@ -297,16 +294,18 @@ class Network(object):
             self.yhat = self.model_with_noise(x, network_perturb_list, self.params)
 
             A = self.cost_fn(self.yhat, y)
+            prior_scale = (self.log_prior_std_base - 0.001) / (
+                1 + torch.exp(-log_prior_std)
+            )
 
             if self.laplace:
-                b0 = log_prior_std
+                b0 = prior_scale
                 KL_div = 0.0
                 mean_diff_sum = 0.0
 
-                for p, p0_np, log_post_std in zip(
-                    self.params, prior_weights, log_post_std_list
+                for p, p0, log_post_std in zip(
+                    self.params, prior_tensors, log_post_std_list
                 ):
-                    p0 = self._t(p0_np)
                     b1 = torch.exp(log_post_std)
                     diff_abs = torch.abs(p - p0)
 
@@ -322,26 +321,20 @@ class Network(object):
                 self.mean_weights_component = mean_diff_sum
                 self.var_weights_component = KL_div - mean_diff_sum
             else:
+                norm_params = sum(
+                    torch.sum((w - w0) ** 2)
+                    for w, w0 in zip(self.params, prior_tensors)
+                )
                 norm_post_variance = sum(
                     torch.sum(torch.exp(s * 2)) for s in log_post_std_list
                 )
                 sum_log_post_variance = sum(torch.sum(s) for s in log_post_std_list)
 
-                self.mean_weights_component = (norm_params) / (
-                    (self.log_prior_std_base - 0.001) / (1 + torch.exp(-log_prior_std))
-                )
+                self.mean_weights_component = norm_params / prior_scale
                 self.var_weights_component = (
-                    norm_post_variance
-                    / (
-                        (self.log_prior_std_base - 0.001)
-                        / (1 + torch.exp(-log_prior_std))
-                    )
+                    norm_post_variance / prior_scale
                     - 2 * sum_log_post_variance
-                    + nparams
-                    * torch.log(
-                        (self.log_prior_std_base - 0.001)
-                        / (1 + torch.exp(-log_prior_std))
-                    )
+                    + nparams * torch.log(prior_scale)
                 )
                 self.KLdivTimes2 = (
                     self.mean_weights_component + self.var_weights_component - nparams
@@ -349,14 +342,11 @@ class Network(object):
 
             f1 = torch.tensor(factor1, device=self.device)
             factor2 = 2 * torch.log(
-                math.log(self.log_prior_std_base)
-                - torch.log(
-                    (self.log_prior_std_base - 0.001) / (1 + torch.exp(-log_prior_std))
-                )
+                math.log(self.log_prior_std_base) - torch.log(prior_scale)
             )
             Bquad = (
                 self.KLdivTimes2 / 2
-                + math.log(np.pi**2 * effective_m / (6 * 0.05))
+                + math.log(np.pi**2 * effective_m / (6 * self.deltaPAC))
                 + f1
                 + factor2
             )
@@ -711,11 +701,13 @@ class Network(object):
 
         mean_train_accuracy = mean_train_accuracy / N_SNN_samples
         mean_test_accuracy = mean_test_accuracy / N_SNN_samples
+        sampled_train_error = min(1.0, max(0.0, 1.0 - mean_train_accuracy))
+        sampled_test_error = min(1.0, max(0.0, 1.0 - mean_test_accuracy))
         print(
             "Train error :",
-            (1 - mean_train_accuracy),
+            sampled_train_error,
             "Test error :",
-            (1 - mean_test_accuracy),
+            sampled_test_error,
         )
 
         B_valD = B_fn(init_log_prior_std_down, jdisc_down)
@@ -726,8 +718,12 @@ class Network(object):
         else:
             KL_val = KLdivTimes2(init_log_prior_std_down) / 2.0
 
-        bpac = approximate_BPAC_bound(mean_train_accuracy, B_val)
-        print("Results with delta = %.3f" % (self.deltaPAC + 0.01))
+        rel_entropy_bound = 2.0 * (B_val**2)
+        train_error_upper = monte_carlo_error_upper(
+            sampled_train_error, N_SNN_samples, self.deltaMC
+        )
+        bpac = inverse_binary_kl(train_error_upper, rel_entropy_bound)
+        print("Results with delta = %.3f" % (self.deltaPAC + self.deltaMC))
         print(
             "PAC bound error:",
             "%.4f" % bpac,
