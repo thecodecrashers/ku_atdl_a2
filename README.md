@@ -21,15 +21,17 @@ All of the automated reproducibility logic is located in `PAC_Bayes_modeifeid`.
    pip install -r requirements.txt
    ```
 
-3. Run the baseline suite (this will reproduce Table 1 from the paper):
+3. Run the baseline architectures corresponding to Table 1:
    ```bash
-   python experiments/run_experiments.py --suite baseline
+   python experiments/run_experiments.py --suite baseline --snn_samples 1000 --eval_interval 0
    ```
 
-4. Run the robustness ablations (this reuses the T-600 checkpoint to test various PAC-Bayes hyperparameters):
+4. Run all three ablations concurrently: random initialization, SGD initialization, and frozen SGD weights:
    ```bash
-   python experiments/run_experiments.py --suite ablation
+   python experiments/run_ablation_fast.py --snn_samples 1000
    ```
+
+   The first two conditions train the posterior mean during the PAC-Bayes stage. The third keeps the 20-epoch SGD weights fixed. All three use a fresh seed independent of the baseline and write to a new directory. Use `--sgd_epochs 1` for a complete SGD epoch in the SGD-initialized condition instead of one mini-batch update. `python experiments/run_ablation_only.py` runs the same three experiments.
 
 5. Plot the results:
    ```bash
@@ -37,6 +39,17 @@ All of the automated reproducibility logic is located in `PAC_Bayes_modeifeid`.
    ```
    This will output a `table1_comparison.csv` and history plots inside the `results/` folder.
 
+The final bound includes Monte Carlo uncertainty. The paper used 150,000 posterior samples; 1,000 samples usually give a larger correction at the same 96.5% per-experiment confidence. The default fast setting is one sample and typically gives a loose bound. Training schedules and the random-label protocol also differ from the paper, so these commands are not a claim of exact Table 1 reproduction.
+
+To reevaluate a completed corrected model with the paper's sampling count, without retraining or overwriting its original summary:
+
+```bash
+python experiments/recompute_summary.py --output_dir <completed-run-directory> --snn_samples 150000 --summary_path <new-summary-file.json>
+```
+
+Datasets, model checkpoints, and local result directories are excluded from Git. Supply the MNIST IDX `.gz` files in `PAC_Bayes_modeifeid/mnist/` before running MNIST experiments.
+
 For full details regarding the implementation, hyperparameters, and reproduction details, please read:
 - [PAC_Bayes_modeifeid/SUMMARY.md](PAC_Bayes_modeifeid/SUMMARY.md)
 - [PAC_Bayes_modeifeid/REPRODUCTION_NOTES.md](PAC_Bayes_modeifeid/REPRODUCTION_NOTES.md)
+- [PAC_Bayes_modeifeid/BOUND_FIXES.md](PAC_Bayes_modeifeid/BOUND_FIXES.md)

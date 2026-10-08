@@ -14,6 +14,9 @@ class CNN(Network):
             layers = [IMAGE_SIZE * IMAGE_SIZE * 3, NUM_CLASSES]
         Network.__init__(self, X, Y, logging, layers, scopes_list, seed, device) # Initialize according to the network class
 
+        # The CNN port shares Network's live-parameter and snapshot distinction.
+        # Convolution kernels keep their saved TensorFlow layout; the forward
+        # helper converts layout at the operation, not in checkpoint storage.
         self.model = convolutional_net  # The base network
         self.model_with_noise = CNN_withnoise
         if initial_weights is None:

@@ -9,6 +9,10 @@ class FC(Network):
                  seed=11, initial_weights=None, device=None):
         Network.__init__(self, X, Y, logging, layers, scopes_list, seed, device)
 
+        # PyTorch replaces the original TensorFlow graph/session variables with
+        # explicit leaf tensors stored in self.params. The inherited weight
+        # getter returns detached NumPy snapshots for serialization; forward
+        # evaluation and KL training use the live tensors, not those snapshots.
         self.model = multilayer_perceptron  # The base network
         self.model_with_noise = MLP_withnoise
         if initial_weights is None:

@@ -24,7 +24,8 @@ We have cleanly separated the mathematical core of the repository from the exper
    - PyTorch `RMSProp` is mapped to legacy TF behavior.
    - Initializer is fixed to truncated normal to avoid divergence.
    - Added secure `--random_labels` for the R-600 ablation.
-   - Introduced the exact `--snn_samples=1` metric from the paper's original open-source release to match `Table 1`.
+   - Retained `--snn_samples=1` as a fast option and added the Monte Carlo confidence correction. Use more samples for tighter final bounds; one draw does not match Table 1 precision.
+   - Corrected the current-mean KL gradient, prior variance domain, confidence parameters, and complete final posterior serialization. See [BOUND_FIXES.md](BOUND_FIXES.md).
 
 ## How to Run
 
@@ -49,18 +50,20 @@ This will run:
 - `T600x3`
 - `R600` (with `--random_labels`)
 
-### 3. Run Ablations
-
-Run the robust evaluation ablations (which will automatically reuse the existing `T600` checkpoint from the baseline suite!):
+### 3. Run Three Ablations
 
 ```bash
-python experiments/run_experiments.py --suite ablation
+python experiments/run_ablation_fast.py
 ```
 
-This tests:
-- **Ablation A:** 5,000 PAC-Bayes epochs instead of 1,000.
-- **Ablation B:** PAC-Bayes with frozen posterior mean (`--no-trainw`).
-- **Ablation C:** True Monte Carlo Stochastic Neural Network evaluation with `N=200` instead of `N=1`.
+The suite runs three conditions concurrently:
+- **Random initialization:** Initialize the PAC-Bayes stage from fresh random weights without any SGD updates.
+- **SGD initialization:** Initialize the PAC-Bayes stage from weights obtained after one SGD mini-batch update by default.
+- **Frozen SGD weights:** Pretrain with SGD for 20 epochs, then optimize variances while keeping all posterior mean weights and biases fixed.
+
+Only the first two conditions train the posterior mean in the second stage. All three share a fresh initialization seed within the run and do not reuse baseline checkpoints or seeds. For `sgd_init`, use `--sgd_epochs 1` for a complete SGD epoch or `--sgd_epochs 20` for full pretraining instead of a single update. The frozen-weight condition has an independent `--frozen_sgd_epochs` option, defaulting to 20.
+
+Each invocation writes to a new directory. The default remains 1,000 PAC-Bayes epochs, final evaluation only, and `snn_samples=1`. `run_ablation_only.py` and the `--suite ablation` entry point call the same suite.
 
 ### 4. Plot and Extract Results
 

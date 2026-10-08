@@ -28,8 +28,15 @@ class TFRMSprop(Optimizer):
                     continue
                 state = self.state[p]
                 if "ms" not in state:
+                    # TensorFlow 1 RMSProp starts its squared-gradient accumulator
+                    # at one, not zero. Matching this matters especially for the
+                    # early PAC steps and the newly created dropped-LR optimizer.
                     state["ms"] = torch.ones_like(p)
                 ms = state["ms"]
                 ms.mul_(group["decay"]).addcmul_(p.grad, p.grad, value=1.0 - group["decay"])
+                # Keep epsilon inside sqrt(ms+eps), as upstream TF1 does.
+                # Substituting default torch.optim.RMSprop would change this
+                # denominator and the accumulator/decay defaults, so the port
+                # uses this explicit update rather than only matching the name.
                 p.addcdiv_(p.grad, (ms + group["eps"]).sqrt(), value=-group["lr"])
         return loss

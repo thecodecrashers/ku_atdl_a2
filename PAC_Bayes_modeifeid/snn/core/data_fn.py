@@ -47,6 +47,9 @@ def _read_idx_labels(path):
 
 
 def _load_raw_mnist(data_dir, validation_size):
+    # Replace the deprecated TensorFlow MNIST loader with direct IDX parsing.
+    # Preserve its held-out validation prefix and [0,1] pixel scaling: the
+    # default 5000-image exclusion gives m=55000, which also enters the bound.
     train_images = _read_idx_images(os.path.join(data_dir, "train-images-idx3-ubyte.gz"))
     train_labels = _read_idx_labels(os.path.join(data_dir, "train-labels-idx1-ubyte.gz"))
     test_images = _read_idx_images(os.path.join(data_dir, "t10k-images-idx3-ubyte.gz"))
@@ -75,6 +78,9 @@ def load_binary_mnist(data_dir = MNIST_DATA_DIR, validation_size=MNIST_VALIDATIO
     trainY = binarize_mnist_labels(trainY).astype(np.float32)
     testY = binarize_mnist_labels(testY).astype(np.float32)
     if random_labels:
+        # The added R600 option deterministically permutes training labels only.
+        # Test labels remain genuine. This is a label permutation, not a new
+        # independent Bernoulli draw for every label, so describe it accordingly.
         rng = np.random.RandomState(seed)
         idx = rng.permutation(len(trainY))
         trainY = trainY[idx]

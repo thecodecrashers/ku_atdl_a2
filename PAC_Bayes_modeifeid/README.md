@@ -2,7 +2,9 @@
 
 This is a port of the PAC-Bayes generalization bound optimization for stochastic neural networks, as described in the article "[Computing Nonvacuous Generalization Bounds for Deep (Stochastic) Neural Networks with Many More Parameters than Training Data](https://arxiv.org/pdf/1703.11008.pdf)" by Dziugaite and Roy, published in *Uncertainty in AI* (2017).
 
-The original implementation (Python 3.5, TensorFlow 1.10, Keras 2.2) has been migrated to **modern PyTorch (>= 2.0) and Python 3.11** (it also works on newer 3.x versions). The algorithm, the project layout, the command line interface, the hyper-parameters and the checkpoint/output file formats are unchanged.
+The original implementation (Python 3.5, TensorFlow 1.10, Keras 2.2) has been migrated to **modern PyTorch (>= 2.0) and Python 3.11** (it also works on newer 3.x versions). The port retains the original network parameter layout and legacy checkpoint format. The experiment runner provides baseline runs and the three ablations described below.
+
+The corrected implementation computes KL using the current trainable mean, constrains the prior to the positive-index variance grid, and applies both Monte Carlo and PAC-Bayes KL inversions during final evaluation. See [BOUND_FIXES.md](BOUND_FIXES.md) for the formulas, confidence interpretation, and validation. Results from the earlier objective require a new second-stage run.
 
 ## Requirements
 Python 3.11 (3.9+ should work), `torch>=2.0`, `numpy>=1.24`:
@@ -17,7 +19,7 @@ Run all commands below from the root of this folder (the one containing `snn/` a
 
 ## Instructions
 
-We provide a streamlined experiment runner to easily reproduce the results from the paper and run specific ablations.
+We provide an experiment runner for the paper's baseline architectures and the initialization/frozen-mean ablations. This does not claim exact reproduction of every Table 1 setting; see [REPRODUCTION_NOTES.md](REPRODUCTION_NOTES.md) for differences. MNIST experiments require the four IDX `.gz` files in `mnist/`; datasets, checkpoints, and local results are excluded from Git.
 
 ### 1. Run Baseline Reproduction (Table 1)
 To run all baseline architectures (T-600, T-1200, T-300x2, T-600x2, T-1200x2, T-600x3, R-600) for Table 1:
@@ -25,11 +27,50 @@ To run all baseline architectures (T-600, T-1200, T-300x2, T-600x2, T-1200x2, T-
 python experiments/run_experiments.py --suite baseline
 ```
 
-### 2. Run Robustness Ablations
-To run additional PAC-Bayes ablations (reusing the T-600 checkpoint from the baseline suite):
+Each baseline invocation creates a unique run root. `--output_dir <new-directory>` or `PACB_RUN_ROOT` can select a new root explicitly; existing roots are rejected. For T-600 alone with 1,000 independent posterior draws and final-only evaluation:
+
 ```bash
-python experiments/run_experiments.py --suite ablation
+python experiments/run_experiments.py --experiment T600 --snn_samples 1000 --eval_interval 0
 ```
+
+### 2. Run the Three Ablations
+```bash
+python experiments/run_ablation_fast.py
+```
+
+- **Random initialization (`random_init`):** Skip SGD and initialize the second-stage PAC-Bayes optimization with freshly sampled random weights.
+- **SGD initialization (`sgd_init`):** Perform one SGD mini-batch update by default, then initialize the second stage with the resulting weights.
+- **Frozen SGD weights (`no_trainw`):** Train SGD for 20 epochs, then keep every weight and bias fixed during the second stage. Optimize only the posterior variances and prior variance.
+
+The first two conditions optimize the posterior mean, posterior variances, and prior variance during the second stage; the third freezes the posterior mean. All three use the same fresh initialization seed within each run, independently of T-600 baseline seeds and checkpoints. No existing checkpoint is loaded. Use `--seed <integer>` for an explicitly reproducible run.
+
+Three threads launch separate training processes. Each invocation creates a new output directory with separate `run.log` files, preserving existing results. Training accuracy evaluation is disabled by default (`--eval_interval 0`); final train/test evaluation is always performed. Use `--eval_interval 50` for diagnostics every 50 epochs.
+
+The terminal reports each condition's SGD, PAC-Bayes, and final evaluation stage, completed updates, elapsed time, and estimated time remaining for the current stage. Progress is refreshed every 30 seconds by default; use `--progress_interval 10` for more frequent updates. ETA uses recent observed throughput and becomes available after two progress measurements. Full child output is still retained in each `run.log`; failures also show the last log lines in the terminal.
+
+`--snn_samples 1` remains the fast default. It gives a valid but usually loose bound after the Monte Carlo correction. Use `--snn_samples 1000` for a more useful final estimate; this increases final evaluation time. `SNN train error` and `SNN test error` are sampled errors, while `SNN train error upper bound` is the Monte Carlo confidence bound used in `PAC-Bayes bound`. The final bound has failure probability `0.025 + 0.01 = 0.035` for each experiment.
+
+New model files contain a complete `final_posterior` record. Reevaluation writes a separate file and refuses legacy outputs with incomplete final snapshots:
+
+```bash
+python experiments/recompute_summary.py --output_dir <completed-run-directory> --snn_samples 1000
+```
+
+For the paper's 150,000 independent posterior draws, choose a fresh output file:
+
+```bash
+python experiments/recompute_summary.py --output_dir <completed-run-directory> --snn_samples 150000 --summary_path <new-summary-file.json>
+```
+
+The confidence stays at 96.5% per experiment because the failure probabilities stay fixed; a larger sample count reduces the Monte Carlo correction. `run_mc_comparison.py` automates comparisons for the locally configured saved runs. Its archived input paths must exist; it does not train missing models in a fresh clone.
+
+To use one full SGD epoch instead of one mini-batch update:
+```bash
+python experiments/run_ablation_fast.py --sgd_epochs 1
+```
+For `sgd_init`, use `--sgd_steps <N>` for a specified number of mini-batch updates, or `--sgd_epochs 20` for 20 complete epochs. These options are mutually exclusive. They do not change the frozen-weight pretraining, which uses `--frozen_sgd_epochs 20` by default. The standalone `run_ablation_only.py` accepts the same options, and `run_experiments.py --suite ablation` delegates to this suite.
+
+Zero biases stay unchanged; only the initial posterior standard deviation has a floor of `1e-8` to avoid `log(0)`. All three processes may share the selected GPU, so concurrent execution does not guarantee higher GPU throughput.
 
 ### 3. Generate Tables and Plots
 After running the suites, you can aggregate the results and generate evaluation plots by running:

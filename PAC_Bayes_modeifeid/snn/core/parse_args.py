@@ -13,16 +13,21 @@ class BasicParser(object):
         self.parser.add_argument("--layers", help="Layer architecture (can only be used with FC)", type=int, nargs='+',
                                  required=False, default=[784, 600, 10])
         self.parser.add_argument("--sgd_epochs", help="Number of epochs", type=int, required=False, default=1)
+        # Added a separate update limit so the short-SGD ablation can perform
+        # one mini-batch update without confusing that with one full epoch.
+        self.parser.add_argument("--sgd_steps", help="Limit SGD to this many mini-batch updates", type=int, default=None)
         self.parser.add_argument("--seed", help="Random seed", type=int, required=False, default=11)
         self.parser.add_argument("--binary", action='store_true')
         self.parser.add_argument("--overwrite", action='store_true')
         self.parser.add_argument("--device", help="Torch device (default: cuda if available, else cpu)", type=str, required=False, default=None)
+        # Per-run directories isolate checkpoints, histories, and summaries.
+        # The experiment launchers require fresh roots to preserve prior results.
         self.parser.add_argument("--output_dir", help="Output directory", type=str, required=False, default=None)
         self.parser.add_argument("--run_name", help="Run name", type=str, required=False, default=None)
         self.parser.add_argument("--random_labels", help="Randomize training labels", action="store_true")
 
     def get_args(self, args):
-        return {"model": args.model, "layers": args.layers, "sgd_epochs": args.sgd_epochs, "seed": args.seed, "binary": args.binary, "overwrite": args.overwrite, "device": args.device, "output_dir": args.output_dir, "run_name": args.run_name, "random_labels": getattr(args, "random_labels", False)}
+        return {"model": args.model, "layers": args.layers, "sgd_epochs": args.sgd_epochs, "sgd_steps": args.sgd_steps, "seed": args.seed, "binary": args.binary, "overwrite": args.overwrite, "device": args.device, "output_dir": args.output_dir, "run_name": args.run_name, "random_labels": getattr(args, "random_labels", False)}
 
     def parse(self):
         args = self.parser.parse_args()
@@ -40,11 +45,21 @@ class CompleteParser(BasicParser):
                                  required=False, default=20)
         self.parser.add_argument("--lr_factor", help="Factor by which the learning rate is dropped", type=float,
                                  required=False, default=0.05)
+        # Upstream uses type=bool: the string "False" is nonempty, so
+        # --trainw False incorrectly becomes True. BooleanOptionalAction exposes
+        # --trainw / --no-trainw and reliably controls posterior mean training.
+        # Freezing the means does not freeze posterior/prior variance parameters.
         self.parser.add_argument("--trainw", help="Train posterior weights during PAC-Bayes optimization", action=argparse.BooleanOptionalAction, default=True)
-        self.parser.add_argument("--snn_samples", help="Stochastic evaluation samples", type=int, required=False, default=1)
+        # Upstream run_pacb.py hardcodes one final draw. Expose N independently
+        # of the training budget: 1 is quick but gives a very loose MC correction;
+        # 1000 is a practical evaluation, and the paper reports N=150000.
+        self.parser.add_argument("--snn_samples", help="Independent posterior draws for final evaluation; 1 is fast but gives a loose corrected bound", type=int, required=False, default=1)
+        # This controls optional epoch diagnostics only. The final independent
+        # posterior evaluation still runs when the interval is zero.
+        self.parser.add_argument("--eval_interval", help="Evaluate training accuracy every N PAC-Bayes epochs; 0 evaluates only after training", type=int, default=1)
 
     def get_args(self, args):
-        pacb_args = {"pacb_epochs": args.pacb_epochs, "lr": args.lr, "drop_lr": args.drop_lr, "lr_factor": args.lr_factor, "trainw": args.trainw, "snn_samples": getattr(args, "snn_samples", 1)}
+        pacb_args = {"pacb_epochs": args.pacb_epochs, "lr": args.lr, "drop_lr": args.drop_lr, "lr_factor": args.lr_factor, "trainw": args.trainw, "snn_samples": getattr(args, "snn_samples", 1), "eval_interval": args.eval_interval}
         complete_args = super().get_args(args)
         complete_args.update(pacb_args)
         return complete_args

@@ -50,5 +50,8 @@ def convolutional_net(images, params):
 
 
 def CNN_withnoise(images, noise_list, params_mean_values):
+    # As in the FC port, use live mean tensors rather than creating variables
+    # from snapshots. The externally scaled Gaussian noise perturbs every
+    # kernel and bias, and the shared Network code controls mean freezing.
     noisy = [m + n for m, n in zip(params_mean_values, noise_list)]
     return convolutional_net(images, noisy)

@@ -1,5 +1,110 @@
 import numpy as np
 import random
+import math
+
+
+def inverse_binary_kl(q, c):
+    """Return a conservative upper solution of binary KL(q || p) <= c."""
+    # New common solver for both the MC and PAC inversions. Binary kl(q||p)
+    # here is between Bernoulli error probabilities; it is distinct from the
+    # high-dimensional Gaussian KL(Q||P) computed by gaussian_kl below.
+    # Upstream uses five unbracketed Newton steps and returns 1 immediately
+    # if its initial q+B exceeds 1. Bisection instead solves on p in [q, 1]
+    # without that initialization-dependent early return.
+    q, c = float(q), float(c)
+    if not math.isfinite(q) or not 0 <= q <= 1:
+        raise ValueError("q must be finite and in [0, 1]")
+    if math.isnan(c) or c < 0:
+        raise ValueError("c must be nonnegative")
+    if q == 1 or math.isinf(c):
+        return 1.0
+    if c == 0:
+        return q
+    if q == 0:
+        # kl(0||p) = -log(1-p), so the endpoint has an exact solution.
+        # expm1 is accurate for small c; nextafter rounds conservatively upward.
+        return min(1.0, math.nextafter(-math.expm1(-c), 1.0))
+    lo, hi = q, 1.0
+    for _ in range(100):
+        mid = (lo + hi) / 2
+        if mid == lo or mid == hi:
+            break
+        kl = q * math.log(q / mid) + (1 - q) * (math.log1p(-q) - math.log1p(-mid))
+        if kl > c:
+            hi = mid
+        else:
+            lo = mid
+    # Keep the upper bracket rather than the midpoint/lower bracket, so finite
+    # numerical precision does not underestimate the mathematical upper endpoint.
+    return hi
+
+
+def monte_carlo_error_upper(error, samples, delta=0.01):
+    """Bound the expected empirical error using independent posterior draws."""
+    # Implements the first inversion in the paper's Section 3.3 / Eq. (6).
+    # error is the mean full-training-set error of N independently drawn SNNs.
+    # The KL Chernoff argument also applies to these bounded [0,1] draw errors.
+    # Counting all examples as independent MC draws would make the penalty
+    # artificially too small, because examples within a draw share one network.
+    # delta controls failure probability; N controls tightness at that delta.
+    if samples < 1 or int(samples) != samples:
+        raise ValueError("samples must be a positive integer")
+    if not 0 < delta < 1:
+        raise ValueError("delta must be in (0, 1)")
+    return inverse_binary_kl(error, math.log(2 / delta) / samples)
+
+
+def gaussian_kl(mean, prior_mean, log_post_std, log_prior_std):
+    """Evaluate diagonal-to-isotropic Gaussian KL in float64 without cancellation."""
+    # Analytic KL for Q=N(mu,diag(sigma^2)) and P=N(w0,lambda*I), with
+    # log_post_std=log(sigma), log_prior_std=log(sqrt(lambda)).
+    # Use the supplied final means, not the initialization snapshot. Float64
+    # and expm1(r)-r reduce cancellation when sigma^2 is close to lambda.
+    # No posterior sampling is needed to compute this quantity.
+    if not len(mean) == len(prior_mean) == len(log_post_std):
+        raise ValueError("Posterior and prior parameter lists must have matching lengths")
+    rho = float(log_prior_std)
+    value = 0.0
+    for w, w0, log_std in zip(mean, prior_mean, log_post_std):
+        w, w0, log_std = (np.asarray(a, dtype=np.float64) for a in (w, w0, log_std))
+        if w.shape != w0.shape or w.shape != log_std.shape:
+            raise ValueError("Posterior and prior parameter shapes must match")
+        r = 2 * (log_std - rho)
+        value += np.sum(np.expm1(r) - r) + np.sum((w - w0) ** 2) * math.exp(-2 * rho)
+    value = float(value / 2)
+    if not math.isfinite(value) or value < 0:
+        raise ValueError("Gaussian KL must be finite and nonnegative")
+    return value
+
+
+def discretized_prior_bound(mean, prior_mean, log_post_std, log_prior_std, m,
+                            delta=0.025, precision=100.0, base=0.1):
+    """Select the better neighboring positive-index prior from the paper's grid."""
+    # The prior grid is lambda_j=base*exp(-j/precision), j>=1. Convert the
+    # continuous training prior to its two neighboring positive integer indices
+    # and compute the actual Gaussian KL for each candidate prior.
+    # Replacing a negative j by abs(j) would change which variance the index
+    # represents; reject out-of-domain legacy models instead of certifying them.
+    if m <= 1 or not 0 < delta < 1 or precision <= 0 or base <= 0:
+        raise ValueError("Invalid PAC-Bayes bound parameters")
+    j = precision * (math.log(base) - 2 * float(log_prior_std))
+    if not math.isfinite(j) or j < 1 - 1e-4:
+        raise ValueError("Prior variance is outside the positive-index grid; retraining is required")
+    j = max(1.0, j)
+    candidates = []
+    for index in sorted({max(1, math.floor(j)), max(1, math.ceil(j))}):
+        rho = (math.log(base) - index / precision) / 2
+        kl = gaussian_kl(mean, prior_mean, log_post_std, rho)
+        # The 2*log(j) term pays for selecting j using the union-bound weights
+        # 6/(pi^2*j^2). This entropy budget C enters kl_inverse(q_upper,C);
+        # B=sqrt(C/2) is the training complexity term, not an error probability.
+        relative_entropy = (kl + math.log(math.pi ** 2 * m / (6 * delta))
+                            + 2 * math.log(index)) / (m - 1)
+        candidates.append({"prior grid index": index, "selected log prior std": rho,
+                           "selected prior variance": math.exp(2 * rho),
+                           "KL(Q || P)": kl, "relative entropy bound": relative_entropy,
+                           "generalization/complexity term B": math.sqrt(relative_entropy / 2)})
+    return min(candidates, key=lambda item: item["relative entropy bound"])
 
 
 def generate_noise(layer_shapes):
@@ -49,14 +154,14 @@ def Newt(p,q,c):
 
 
 def approximate_BPAC_bound(train_accur, B_init, niter=5):
-    B_RE = 2* B_init **2
-    A = 1-train_accur
-    B_next = B_init+A
-    if B_next>1.0:
-        return 1.0
-    for i in range(niter):
-        B_next = Newt(B_next,A,B_RE)
-    return B_next
+    """Invert the PAC-Bayes KL bound; niter is retained for API compatibility."""
+    # Legacy callers provide accuracy and B, so recover q=1-accuracy and C=2B^2.
+    # niter no longer chooses a Newton iteration count. This wrapper alone does
+    # not include MC uncertainty; the final evaluator explicitly applies the
+    # first inversion to q before performing the second PAC inversion.
+    if not math.isfinite(float(B_init)) or B_init < 0:
+        raise ValueError("B_init must be finite and nonnegative")
+    return inverse_binary_kl(1 - train_accur, 2 * B_init ** 2)
 
 
 def hoeffdingbnd(M,delta):
@@ -65,13 +170,10 @@ def hoeffdingbnd(M,delta):
 
 
 def SamplesConvBound(train_error=0.028,M=1000,delta=0.01,p_init = None, niter = 5):
-    c =  np.log(2/delta)/M
-    if p_init is None:
-        p_init = hoeffdingbnd(M,delta)
-        print("Hoeffding's error", p_init)
-    p_next = p_init+train_error
-    for i in range(niter):
-        p_next = Newt(p_next,train_error,c)
+    # Preserve the upstream helper's return convention: the additional error
+    # margin, not the corrected error itself. p_init/niter are compatibility
+    # arguments; the new evaluator calls monte_carlo_error_upper directly.
+    p_next = monte_carlo_error_upper(train_error, M, delta)
     print("Chernoff's error", p_next-train_error)
     return p_next-train_error
 
