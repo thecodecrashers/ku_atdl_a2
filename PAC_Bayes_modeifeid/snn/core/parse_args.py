@@ -45,7 +45,7 @@ class CompleteParser(BasicParser):
         self.parser.add_argument("--laplace", help="Use Laplace noise instead of Gaussian noise", action=argparse.BooleanOptionalAction, default=False)
 
     def get_args(self, args):
-        pacb_args = {"pacb_epochs": args.pacb_epochs, "lr": args.lr, "drop_lr": args.drop_lr, "lr_factor": args.lr_factor, "trainw": args.trainw, "snn_samples": getattr(args, "snn_samples", 1)}
+        pacb_args = {"pacb_epochs": args.pacb_epochs, "lr": args.lr, "drop_lr": args.drop_lr, "lr_factor": args.lr_factor, "trainw": args.trainw, "snn_samples": getattr(args, "snn_samples", 1), "laplace": args.laplace}
         complete_args = super().get_args(args)
         complete_args.update(pacb_args)
         return complete_args
