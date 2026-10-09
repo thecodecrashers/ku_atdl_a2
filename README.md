@@ -31,7 +31,7 @@ All of the automated reproducibility logic is located in `PAC_Bayes_modeifeid`.
    python experiments/run_ablation_fast.py --snn_samples 1000
    ```
 
-   The first two conditions train the posterior mean during the PAC-Bayes stage. The third keeps the 20-epoch SGD weights fixed. All three use a fresh seed independent of the baseline and write to a new directory. Use `--sgd_epochs 1` for a complete SGD epoch in the SGD-initialized condition instead of one mini-batch update. `python experiments/run_ablation_only.py` runs the same three experiments.
+   The first two conditions train the posterior mean during the PAC-Bayes stage. The third keeps the 20-epoch SGD weights fixed. By default all three share a fresh seed independent of the baseline and write to a new directory. Add `--seed 11` to match the baseline's numeric training seed. Use `--sgd_epochs 1` for a complete SGD epoch in the SGD-initialized condition instead of one mini-batch update. `python experiments/run_ablation_only.py` runs the same three experiments.
 
 5. Plot the results:
    ```bash

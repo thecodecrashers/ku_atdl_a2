@@ -33,6 +33,23 @@ Each baseline invocation creates a unique run root. `--output_dir <new-directory
 python experiments/run_experiments.py --experiment T600 --snn_samples 1000 --eval_interval 0
 ```
 
+To match the upstream code's default training seed, use `--seed 11` explicitly
+for both T600 and the three ablations. The paper does not list the Table 1
+training seeds; the same numeric seed also does not produce identical random
+draws across TensorFlow and PyTorch. Within this PyTorch version, the commands
+below use the same initial weights and fixed prior mean across the four runs:
+
+```bash
+python -u experiments/run_experiments.py --experiment T600 --seed 11 --snn_samples 150000 --eval_interval 0
+python -u experiments/run_ablation_fast.py --seed 11 --sgd_steps 1 --frozen_sgd_epochs 20 --snn_samples 150000 --eval_interval 0 --progress_interval 15
+```
+
+These commands start new training runs in fresh result directories. The three
+ablations run concurrently; the baseline is a separate invocation. Training
+uses seed 11, while final Monte Carlo draws use an independent recorded seed
+for the confidence correction. Without an explicit `--seed`, baseline runs
+still use 11 and ablations still select a fresh seed.
+
 ### 2. Run the Three Ablations
 ```bash
 python experiments/run_ablation_fast.py
@@ -42,7 +59,7 @@ python experiments/run_ablation_fast.py
 - **SGD initialization (`sgd_init`):** Perform one SGD mini-batch update by default, then initialize the second stage with the resulting weights.
 - **Frozen SGD weights (`no_trainw`):** Train SGD for 20 epochs, then keep every weight and bias fixed during the second stage. Optimize only the posterior variances and prior variance.
 
-The first two conditions optimize the posterior mean, posterior variances, and prior variance during the second stage; the third freezes the posterior mean. All three use the same fresh initialization seed within each run, independently of T-600 baseline seeds and checkpoints. No existing checkpoint is loaded. Use `--seed <integer>` for an explicitly reproducible run.
+The first two conditions optimize the posterior mean, posterior variances, and prior variance during the second stage; the third freezes the posterior mean. All three share one initialization seed within each run. By default it is fresh and independent of T-600 baseline seeds; an explicit `--seed 11` aligns the numeric training seed with the baseline. No existing baseline checkpoint is loaded. Use `--seed <integer>` for an explicitly reproducible run.
 
 Three threads launch separate training processes. Each invocation creates a new output directory with separate `run.log` files, preserving existing results. Training accuracy evaluation is disabled by default (`--eval_interval 0`); final train/test evaluation is always performed. Use `--eval_interval 50` for diagnostics every 50 epochs.
 

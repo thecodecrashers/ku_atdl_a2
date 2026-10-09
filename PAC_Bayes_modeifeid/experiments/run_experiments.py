@@ -81,16 +81,23 @@ def main(argv=None):
     selection.add_argument("--suite", choices=["baseline", "ablation", "all"])
     selection.add_argument("--experiment", choices=ARCHITECTURES)
     parser.add_argument("--output_dir", help="New run root; default creates a unique directory")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Training seed; baseline default is upstream's 11, ablation default is fresh")
     parser.add_argument("--snn_samples", type=int, default=1,
                         help="Independent posterior draws for final evaluation; 1 is fast but gives a loose bound")
     parser.add_argument("--eval_interval", type=int, default=1)
     args = parser.parse_args(argv)
     if args.snn_samples < 1 or args.eval_interval < 0:
         parser.error("snn_samples must be positive and eval_interval must be nonnegative")
+    if args.seed is not None and not 0 <= args.seed < 2**32:
+        parser.error("seed must be in [0, 2**32)")
     
-    # Preserve the baseline's training seed. The separate fast ablation runner
-    # chooses a fresh seed unless explicitly instructed otherwise.
-    seed = 11
+    # The upstream CLI defaults to seed 11; this is a code default, not proof
+    # that every experiment reported in the paper used that exact seed.
+    # An explicit --seed is shared with the ablation suite. Omitting it retains
+    # the previous baseline seed 11 and the ablation's fresh-seed behavior.
+    # Matching numeric seeds across TensorFlow/PyTorch does not match RNG draws.
+    seed = 11 if args.seed is None else args.seed
     base_out = (args.output_dir or os.environ.get("PACB_RUN_ROOT") or
                 os.path.join(PKG_ROOT, "results", f"run_{uuid.uuid4().hex}"))
     base_out = os.path.abspath(base_out)
@@ -109,7 +116,7 @@ def main(argv=None):
             run_experiment(exp, seed, os.path.join(base_out, "baseline", exp, f"seed{seed}"), is_r600=(exp=="R600"), snn_samples=args.snn_samples, eval_interval=args.eval_interval)
             
     if args.suite in ["ablation", "all"]:
-        run_ablation_suite(base_out=base_out, snn_samples=args.snn_samples)
+        run_ablation_suite(seed=args.seed, base_out=base_out, snn_samples=args.snn_samples)
         
     if args.experiment:
         run_experiment(args.experiment, seed, os.path.join(base_out, "custom", args.experiment, f"seed{seed}"), is_r600=(args.experiment=="R600"), snn_samples=args.snn_samples, eval_interval=args.eval_interval)
